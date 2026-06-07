@@ -133,9 +133,7 @@ def update_stock_redis(order_items, operation):
                 new_quantity = current_stock - quantity
 
             pipeline.hset(f"stock:{product_id}", "quantity", new_quantity)
-
         pipeline.execute()
-
     else:
         _populate_redis_from_mysql(r)
 
