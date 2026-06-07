@@ -1,0 +1,47 @@
+name: CD
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout dépôt
+        uses: actions/checkout@v4
+
+      - name: Créer fichier .env
+        run: |
+          cat > .env << EOF
+          MYSQL_ROOT_PASSWORD=root
+          MYSQL_DATABASE=labo03_db
+          MYSQL_USER=labo03
+          MYSQL_PASSWORD=labo03
+
+          DB_HOST=mysql
+          DB_PORT=3306
+          DB_NAME=labo03_db
+          DB_USER=labo03
+          DB_PASS=labo03
+
+          REDIS_HOST=redis
+          REDIS_PORT=6379
+          REDIS_DB=0
+          EOF
+
+      - name: Préparer réseau Docker
+        run: |
+          docker network inspect labo03-network >/dev/null 2>&1 || docker network create labo03-network
+
+      - name: Déployer avec Docker Compose
+        run: |
+          docker compose down
+          docker compose up -d --build
+
+      - name: Vérifier les conteneurs
+        run: |
+          docker compose ps

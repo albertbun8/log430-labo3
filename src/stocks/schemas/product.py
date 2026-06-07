@@ -1,6 +1,8 @@
-from graphene import ObjectType, String, Int, Float
+import graphene
 
-class Product(ObjectType):
-    id = Int()
-    name = String()
-    quantity = Int()
+class Product(graphene.ObjectType):
+    id = graphene.Int()
+    name = graphene.String()
+    sku = graphene.String()
+    price = graphene.Float()
+    quantity = graphene.Int()

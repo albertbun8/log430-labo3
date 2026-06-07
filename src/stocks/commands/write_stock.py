@@ -10,29 +10,69 @@ from db import get_redis_conn, get_sqlalchemy_session
 def set_stock_for_product(product_id, quantity):
     """Set stock quantity for product in MySQL"""
     session = get_sqlalchemy_session()
-    try: 
+
+    try:
         result = session.execute(
-            text(f"""
-                UPDATE stocks 
-                SET quantity = :qty 
+            text("""
+                UPDATE stocks
+                SET quantity = :qty
                 WHERE product_id = :pid
             """),
             {"pid": product_id, "qty": quantity}
         )
+
         response_message = f"rows updated: {result.rowcount}"
+
         if result.rowcount == 0:
-            new_stock = Stock(product_id=product_id, quantity=quantity)
+            new_stock = Stock(
+                product_id=product_id,
+                quantity=quantity
+            )
+
             session.add(new_stock)
-            response_message = f"rows added, product {new_stock.product_id}"
-            session.flush() 
-            session.commit()
-  
+
+            response_message = (
+                f"rows added, product {new_stock.product_id}"
+            )
+
+            session.flush()
+
+        session.commit()
+
+        product = session.execute(
+            text("""
+                SELECT name, sku, price
+                FROM products
+                WHERE id = :pid
+            """),
+            {"pid": product_id}
+        ).fetchone()
+
         r = get_redis_conn()
-        r.hset(f"stock:{product_id}", "quantity", quantity)
+
+        if product:
+            r.hset(
+                f"stock:{product_id}",
+                mapping={
+                    "quantity": quantity,
+                    "name": product.name,
+                    "sku": product.sku,
+                    "price": float(product.price)
+                }
+            )
+        else:
+            r.hset(
+                f"stock:{product_id}",
+                "quantity",
+                quantity
+            )
+
         return response_message
+
     except Exception as e:
         session.rollback()
         raise e
+
     finally:
         session.close()
     
@@ -69,10 +109,13 @@ def update_stock_redis(order_items, operation):
     """ Update stock quantities in Redis """
     if not order_items:
         return
+
     r = get_redis_conn()
     stock_keys = list(r.scan_iter("stock:*"))
+
     if stock_keys:
         pipeline = r.pipeline()
+
         for item in order_items:
             if hasattr(item, 'product_id'):
                 product_id = item.product_id
@@ -80,45 +123,61 @@ def update_stock_redis(order_items, operation):
             else:
                 product_id = item['product_id']
                 quantity = item['quantity']
-            # TODO: ajoutez plus d'information sur l'article
+
             current_stock = r.hget(f"stock:{product_id}", "quantity")
             current_stock = int(current_stock) if current_stock else 0
-            
+
             if operation == '+':
                 new_quantity = current_stock + quantity
-            else:  
+            else:
                 new_quantity = current_stock - quantity
-            
+
             pipeline.hset(f"stock:{product_id}", "quantity", new_quantity)
-        
+
         pipeline.execute()
-    
+
     else:
         _populate_redis_from_mysql(r)
 
 def _populate_redis_from_mysql(redis_conn):
     """ Helper function to populate Redis from MySQL stocks table """
     session = get_sqlalchemy_session()
+
     try:
         stocks = session.execute(
-            text("SELECT product_id, quantity FROM stocks")
+            text("""
+                SELECT
+                    s.product_id,
+                    s.quantity,
+                    p.name,
+                    p.sku,
+                    p.price
+                FROM stocks s
+                JOIN products p
+                    ON s.product_id = p.id
+            """)
         ).fetchall()
 
         if not len(stocks):
             print("Il n'est pas nécessaire de synchronisér le stock MySQL avec Redis")
             return
-        
+
         pipeline = redis_conn.pipeline()
-        
-        for product_id, quantity in stocks:
+
+        for product_id, quantity, name, sku, price in stocks:
             pipeline.hset(
-                f"stock:{product_id}", 
-                mapping={ "quantity": quantity }
+                f"stock:{product_id}",
+                mapping={
+                    "quantity": quantity,
+                    "name": name,
+                    "sku": sku,
+                    "price": float(price)
+                }
             )
-        
+
         pipeline.execute()
         print(f"{len(stocks)} enregistrements de stock ont été synchronisés avec Redis")
-        
+
     except Exception as e:
         print(f"Erreur de synchronisation: {e}")
         raise e
